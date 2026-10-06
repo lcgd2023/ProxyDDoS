@@ -1,0 +1,6 @@
+requests>=2.31
+beautifulsoup4>=4.12
+# 仅在使用 --validate 验证 SOCKS4/SOCKS5 代理时需要
+PySocks>=1.7
+# 仅 http_pressure_test.py（压测工具，命令行/图形界面共用）需要
+aiohttp>=3.9
