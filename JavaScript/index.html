@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HTTP 压力测试工具（浏览器版）</title>
+<style>
+  :root {
+    --bg: #171d2b; --muted: #8b97ad; --text: #e8ecf5; --red: #ff5f6d;
+    --green: #2ecc71; --blue: #4da3ff; --line: #2a3348;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 18px; background: #0f1420; color: var(--text);
+         font: 14px/1.6 "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif; }
+  .wrap { max-width: 1040px; margin: 0 auto; }
+  .banner { background: var(--red); color: #fff; font-weight: 700; padding: 8px 12px;
+            border-radius: 6px 6px 0 0; }
+  .panel { background: #141a28; border: 1px solid var(--line); border-top: 0;
+           border-radius: 0 0 6px 6px; padding: 14px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .row label { color: var(--muted); }
+  input[type=text], input[type=number] { background: #0f1420; color: var(--text);
+    border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; font: inherit; }
+  input[type=number] { width: 76px; }
+  #url { flex: 1; min-width: 240px; }
+  button { background: #223047; color: var(--text); border: 1px solid var(--line);
+           border-radius: 4px; padding: 7px 14px; font: inherit; cursor: pointer; }
+  button:hover:not(:disabled) { background: #2b3d5a; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  #start { background: #1f6feb; border-color: #1f6feb; }
+  #start:hover:not(:disabled) { background: #2f7cf6; }
+  .prog { display: flex; align-items: center; gap: 10px; margin: 6px 0 14px; }
+  .track { flex: 1; height: 14px; background: #0f1420; border: 1px solid var(--line);
+           border-radius: 7px; overflow: hidden; }
+  #bar { height: 100%; width: 0; background: linear-gradient(90deg, #2ecc71, #4da3ff);
+         transition: width .2s; }
+  #pct { color: var(--muted); min-width: 96px; text-align: right; }
+  .cards { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 12px; }
+  .card { background: var(--bg); border-radius: 6px; padding: 10px 6px; text-align: center; }
+  .card .k { color: var(--muted); font-size: 12px; }
+  .card .v { font: 700 20px/1.4 Consolas, monospace; color: var(--text); }
+  canvas { width: 100%; height: 150px; background: var(--bg); border-radius: 6px;
+           display: block; }
+  .line { margin-top: 8px; color: var(--muted); }
+  .line.err { color: var(--red); }
+  .log { margin-top: 10px; background: var(--bg); border-radius: 6px; padding: 8px 10px;
+         height: 190px; overflow: auto; font: 13px/1.7 Consolas, monospace;
+         color: var(--muted); white-space: pre-wrap; word-break: break-all; }
+  .log .t { color: var(--muted); }
+  .log .ok { color: var(--green); }
+  .log .cfg { color: var(--blue); }
+  .log .err { color: var(--red); }
+  .foot { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+  .foot .hint { margin-left: auto; color: var(--muted); font-size: 12px; text-align: right; }
+  .status { color: var(--muted); margin-left: auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="banner">⚠️ 仅用于已获得完整书面授权的自有服务器；禁止对未授权目标发起压力测试。</div>
+  <div class="panel">
+    <div class="row">
+      <label for="url">目标地址</label>
+      <input id="url" type="text" value="http://127.0.0.1:8080/" placeholder="http://127.0.0.1:8080/">
+      <span class="status" id="status">就绪</span>
+    </div>
+    <div class="row">
+      <label for="conc">并发</label><input id="conc" type="number" min="1" max="1000" value="5">
+      <label for="dur">时长(秒)</label><input id="dur" type="number" min="1" max="7200" value="30">
+      <label for="to">超时(秒)</label><input id="to" type="number" min="1" max="120" value="10">
+      <label><input id="nocors" type="checkbox" checked> 跨域自动降级 no-cors（只测连通性）</label>
+      <label><input id="auth" type="checkbox"> 我已获得该目标的完整书面授权</label>
+    </div>
+    <div class="row">
+      <button id="start">▶ 开始测试</button>
+      <button id="stop" disabled>■ 停止</button>
+      <span id="proxyNote" class="status"></span>
+    </div>
+
+    <div class="prog">
+      <div class="track"><div id="bar"></div></div>
+      <span id="pct">0%</span>
+    </div>
+
+    <div class="cards">
+      <div class="card"><div class="k">总请求</div><div class="v" id="v_total">0</div></div>
+      <div class="card"><div class="k">成功</div><div class="v" id="v_success" style="color:#2ecc71">0</div></div>
+      <div class="card"><div class="k">失败</div><div class="v" id="v_failed" style="color:#ff5f6d">0</div></div>
+      <div class="card"><div class="k">当前 QPS</div><div class="v" id="v_qps">0.0</div></div>
+      <div class="card"><div class="k">峰值 QPS</div><div class="v" id="v_peak">0.0</div></div>
+      <div class="card"><div class="k">平均响应</div><div class="v" id="v_avg">0 ms</div></div>
+    </div>
+
+    <canvas id="chart"></canvas>
+    <div class="line" id="codes">状态码分布：—</div>
+    <div class="line err" id="errors"></div>
+    <div class="log" id="log"></div>
+
+    <div class="foot">
+      <button id="copy">复制报告</button>
+      <button id="download">下载报告…</button>
+      <button id="clear">清空日志</button>
+      <span class="hint" id="hint"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ------------------------------------------------------------------ *
+ * HTTP 压测工具（浏览器版）—— 与 Node 版 / Python 版统计口径一致。
+ * 浏览器的硬限制（无法绕过）：
+ *   · 不支持代理（浏览器不允许自定义出站代理）
+ *   · 同域并行约 6 条（HTTP/1.1），HTTP/2 目标可多路复用
+ *   · 跨域目标受 CORS 限制 → 勾选「自动降级 no-cors」可测连通性（看不到状态码）
+ * ------------------------------------------------------------------ */
+const $ = (id) => document.getElementById(id);
+const UA = navigator.userAgent;
+const REASON_ZH = {
+  AbortError: '请求超时/已中止',
+  TypeError: 'CORS 被拦或网络不可达',
+  LoadError: '网络错误',
+};
+
+const state = {
+  running: false,
+  stop: false,
+  controllers: new Set(),
+  duration: 30,
+  series: [],
+  lastReport: '',
+  stats: null,
+};
+
+function makeStats() {
+  return {
+    total: 0, success: 0, failed: 0,
+    statusCodes: new Map(), errors: new Map(),
+    totalRespTime: 0, peakQps: 0,
+    startTime: performance.now(),
+  };
+}
+
+function bump(map, key, n = 1) { map.set(key, (map.get(key) || 0) + n); }
+
+function snapshot() {
+  const s = state.stats;
+  const elapsed = (performance.now() - s.startTime) / 1000;
+  const qps = elapsed > 0 ? s.total / elapsed : 0;
+  if (qps > s.peakQps) s.peakQps = qps;
+  const sortDesc = (m) => [...m.entries()].sort((a, b) => b[1] - a[1]);
+  return {
+    elapsed, total: s.total, success: s.success, failed: s.failed,
+    qps, peakQps: s.peakQps,
+    avgMs: s.success ? s.totalRespTime / s.success : 0,
+    statusCodes: sortDesc(s.statusCodes),
+    errors: sortDesc(s.errors).slice(0, 5),
+  };
+}
+
+function normalizeUrl(raw) {
+  let u = String(raw || "").trim();
+  if (!u) throw new Error("请填写目标地址");
+  if (!u.includes("://")) u = "http://" + u;
+  const p = new URL(u);
+  if (p.protocol !== "http:" && p.protocol !== "https:") throw new Error("目标只支持 http / https");
+  return p.toString();
+}
+
+function toInt(value, name, lo, hi) {
+  const n = Number(value);
+  if (!Number.isInteger(n)) throw new Error(name + " 必须是整数");
+  if (n < lo || n > hi) throw new Error(name + " 要在 " + lo + "~" + hi + " 之间");
+  return n;
+}
+
+function reasonOf(e) {
+  const name = (e && (e.name || e.constructor && e.constructor.name)) || "Error";
+  const zh = REASON_ZH[name];
+  if (name === "AbortError" && state.stop) return null;   // 用户点了停止，不计入失败
+  return zh ? `${name}（${zh}）` : name;
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function readLimited(res, limit = 65536) {
+  if (!res.body || !res.body.getReader) return;
+  const reader = res.body.getReader();
+  let got = 0;
+  try {
+    while (got < limit) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      got += value.length;
+    }
+    await reader.cancel();
+  } catch { /* 连接提前断开不影响结果 */ }
+}
+
+async function oneRequest(url, timeoutMs) {
+  const t0 = performance.now();
+  const attempt = async (mode) => {
+    const ctrl = new AbortController();
+    state.controllers.add(ctrl);
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        mode,                       // cors / no-cors
+        cache: "no-store",
+        redirect: "follow",
+        credentials: "omit",
+        signal: ctrl.signal,
+        headers: { "User-Agent": UA },
+      });
+      await readLimited(res);
+      return { ok: true, status: res.status || 0, ms: performance.now() - t0, opaque: mode === "no-cors" };
+    } finally {
+      clearTimeout(timer);
+      state.controllers.delete(ctrl);
+    }
+  };
+
+  try {
+    return await attempt("cors");
+  } catch (e) {
+    if (state.stop) return { skip: true, reason: null };
+    const autoNoCors = $("nocors").checked && location.origin !== new URL(url).origin;
+    if (autoNoCors) {
+      try {
+        const r = await attempt("no-cors");
+        r.degraded = true;
+        return r;
+      } catch (e2) {
+        return { skip: state.stop, ok: false, ms: performance.now() - t0, reason: reasonOf(e2) };
+      }
+    }
+    return { skip: false, ok: false, ms: performance.now() - t0, reason: reasonOf(e) };
+  }
+}
+
+function record(r) {
+  if (r.skip) return;
+  const s = state.stats;
+  s.total += 1;
+  if (r.ok) {
+    s.success += 1;
+    bump(s.statusCodes, r.opaque ? "跨域不可见" : r.status);
+    s.totalRespTime += r.ms;
+    if (r.degraded) bump(s.errors, "no-cors 降级（状态码不可见）", 0); // 仅占位，避免误报
+  } else {
+    s.failed += 1;
+    if (r.reason) bump(s.errors, r.reason);
+  }
+}
+
+// ------------------------------------------------------------------ #
+// 报告
+// ------------------------------------------------------------------ #
+function buildReport() {
+  const s = snapshot();
+  const pct = (n) => (s.total ? (n / s.total) * 100 : 0).toFixed(1);
+  const lines = [
+    "", "=".repeat(60), "📊 测试完成报告",
+    `⏱️  总测试时长: ${s.elapsed.toFixed(2)} 秒`,
+    `📤 总请求数: ${s.total}`,
+    `✅ 成功请求: ${s.success} | ❌ 失败请求: ${s.failed}`,
+    `⚡ 每秒请求数(QPS): ${s.qps.toFixed(2)}`,
+    `⏳ 平均响应时间: ${s.avgMs.toFixed(2)} ms`,
+  ];
+  if (s.success > 0) {
+    lines.push("🔢 状态码分布:");
+    for (const [code, n] of [...s.statusCodes].sort((a, b) => String(a[0]).localeCompare(String(b[0])))) {
+      lines.push(typeof code === "number"
+        ? `    HTTP ${code}: ${n} 次 (${pct(n)}%)`
+        : `    ${code}: ${n} 次 (${pct(n)}%)`);
+    }
+  }
+  if (s.failed > 0) {
+    lines.push("❌ 失败原因分布:");
+    for (const [reason, n] of [...s.errors].sort((a, b) => b[1] - a[1])) {
+      lines.push(`    ${reason}: ${n} 次 (${pct(n)}%)`);
+    }
+  }
+  lines.push("=".repeat(60));
+  return lines.join("\n");
+}
+
+// ------------------------------------------------------------------ #
+// 界面
+// ------------------------------------------------------------------ #
+function log(msg, cls = "") {
+  const box = $("log");
+  const line = document.createElement("div");
+  const stamp = document.createElement("span");
+  stamp.className = "t";
+  stamp.textContent = `[${new Date().toTimeString().slice(0, 8)}] `;
+  line.appendChild(stamp);
+  const body = document.createElement("span");
+  if (cls) body.className = cls;
+  body.textContent = msg;
+  line.appendChild(body);
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+
+function clearLog() { $("log").innerHTML = ""; }
+
+function drawChart() {
+  const cv = $("chart");
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = 150;
+  cv.width = w * dpr; cv.height = h * dpr;
+  const ctx = cv.getContext("2d");
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+
+  const padL = 46, padR = 8, padT = 8, padB = 18;
+  const cw = w - padL - padR, ch = h - padT - padB;
+  const data = state.series;
+  const ymax = Math.max(1, ...data.map((d) => d[1]));
+
+  ctx.strokeStyle = "#2a3348";
+  ctx.fillStyle = "#8b97ad";
+  ctx.font = "11px Consolas, monospace";
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 4; i++) {
+    const y = padT + (ch * i) / 3;
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
+    ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    ctx.fillText(String(Math.round((ymax * (3 - i)) / 3)), padL - 6, y);
+  }
+  ctx.textAlign = "right"; ctx.textBaseline = "alphabetic";
+  ctx.fillText("时间 →", w - padR, h - 4);
+
+  if (data.length < 2) {
+    ctx.textAlign = "center";
+    ctx.fillText("采集中…", padL + cw / 2, padT + ch / 2);
+    return;
+  }
+  const tmax = data[data.length - 1][0] || 1;
+  const px = (t) => padL + cw * (t / tmax);
+  const py = (q) => padT + ch * (1 - q / ymax);
+
+  ctx.beginPath();
+  ctx.moveTo(px(data[0][0]), py(data[0][1]));
+  for (const [t, q] of data.slice(1)) ctx.lineTo(px(t), py(q));
+  ctx.lineTo(padL + cw, padT + ch);
+  ctx.lineTo(padL, padT + ch);
+  ctx.closePath();
+  ctx.fillStyle = "#1f3a5f";
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(px(data[0][0]), py(data[0][1]));
+  for (const [t, q] of data.slice(1)) ctx.lineTo(px(t), py(q));
+  ctx.strokeStyle = "#4da3ff";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.fillStyle = "#2ecc71";
+  ctx.textAlign = "left";
+  ctx.font = "12px Consolas, monospace";
+  ctx.fillText(`峰值 ${state.stats.peakQps.toFixed(1)} QPS`, padL + 6, padT + 14);
+}
+
+function refresh() {
+  if (!state.stats) return;
+  const s = snapshot();
+  $("v_total").textContent = s.total;
+  $("v_success").textContent = s.success;
+  $("v_failed").textContent = s.failed;
+  $("v_qps").textContent = s.qps.toFixed(1);
+  $("v_peak").textContent = s.peakQps.toFixed(1);
+  $("v_avg").textContent = Math.round(s.avgMs) + " ms";
+
+  const pct = Math.min(100, (s.elapsed / state.duration) * 100);
+  $("bar").style.width = pct + "%";
+  $("pct").textContent = `${pct.toFixed(0)}%  ${s.elapsed.toFixed(1)}/${state.duration}s`;
+
+  $("codes").textContent = s.statusCodes.length
+    ? "状态码分布：" + s.statusCodes.map(([c, n]) =>
+        typeof c === "number" ? `HTTP ${c}: ${n} 次（${((n / s.total) * 100).toFixed(1)}%）`
+                              : `${c}: ${n} 次`).join("   ")
+    : "状态码分布：—";
+  $("errors").textContent = (s.failed && s.errors.length)
+    ? "失败原因：" + s.errors.map(([r, n]) => `${r} ×${n}`).join("   ")
+    : "";
+
+  state.series.push([s.elapsed, s.qps]);
+  if (state.series.length > 900) state.series.shift();
+  drawChart();
+}
+
+// ------------------------------------------------------------------ #
+// 运行
+// ------------------------------------------------------------------ #
+async function worker(url, timeoutMs, deadline) {
+  while (!state.stop && Date.now() < deadline) {
+    const t0 = performance.now();
+    const r = await oneRequest(url, timeoutMs);
+    record(r);
+    // 瞬间失败时补一点间隔：不烧 CPU、数字也不虚高
+    if (performance.now() - t0 < 2) await sleep(20);
+  }
+}
+
+async function start() {
+  if (state.running) return;
+  if (!$("auth").checked) { alert("请先勾选「我已获得该目标的完整书面授权」。"); return; }
+  let url, conc, dur, timeout;
+  try {
+    url = normalizeUrl($("url").value);
+    conc = toInt($("conc").value, "并发数", 1, 1000);
+    dur = toInt($("dur").value, "测试时长", 1, 7200);
+    timeout = toInt($("to").value, "超时时间", 1, 120);
+  } catch (e) {
+    alert(e.message);
+    return;
+  }
+
+  state.running = true;
+  state.stop = false;
+  state.duration = dur;
+  state.stats = makeStats();
+  state.series = [];
+  state.lastReport = "";
+  $("start").disabled = true;
+  $("stop").disabled = false;
+  $("status").textContent = "运行中…";
+  $("bar").style.width = "0%";
+  refresh();
+
+  log(`开始测试  目标 ${url} | 并发 ${conc} | 时长 ${dur}s | 超时 ${timeout}s | 浏览器版不走代理`, "cfg");
+  if (conc > 6) log("提示：HTTP/1.1 下同域最多约 6 条并行，更高并发只对 HTTP/2 目标有效", "err");
+
+  const deadline = Date.now() + dur * 1000;
+  const timer = setInterval(refresh, 200);
+  try {
+    await Promise.all(Array.from({ length: conc }, () => worker(url, timeout * 1000, deadline)));
+  } finally {
+    clearInterval(timer);
+  }
+
+  refresh();
+  state.running = false;
+  $("start").disabled = false;
+  $("stop").disabled = true;
+  $("status").textContent = state.stop ? "已停止" : "已完成";
+  state.lastReport = buildReport();
+  state.lastReport.split("\n").forEach((l) => { if (l.trim() && !l.startsWith("=")) log(l, "ok"); });
+}
+
+function stop() {
+  if (!state.running) return;
+  state.stop = true;
+  for (const c of state.controllers) { try { c.abort(); } catch {} }
+  $("stop").disabled = true;
+  $("status").textContent = "停止中…";
+  log("已请求停止，正在中止在途请求…", "err");
+}
+
+function copyReport() {
+  if (!state.lastReport) { alert("还没有测试报告，先跑一轮。"); return; }
+  const text = state.lastReport;
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(() => log("报告已复制到剪贴板"), fallback);
+  } else fallback();
+
+  function fallback() {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); log("报告已复制到剪贴板"); }
+    catch { log("复制失败，请手动选择日志内容", "err"); }
+    document.body.removeChild(ta);
+  }
+}
+
+function downloadReport() {
+  if (!state.lastReport) { alert("还没有测试报告，先跑一轮。"); return; }
+  const head = [
+    `目标: ${$("url").value.trim()}`,
+    `并发: ${$("conc").value}  时长: ${$("dur").value}s  超时: ${$("to").value}s`,
+    `代理: 浏览器版不支持代理`,
+    `时间: ${new Date().toLocaleString("zh-CN")}`,
+    "=".repeat(60),
+  ].join("\n");
+  const blob = new Blob([head + "\n" + state.lastReport + "\n"], { type: "text/plain;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `压测报告_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  log("报告已下载", "ok");
+}
+
+// ------------------------------------------------------------------ #
+// 启动
+// ------------------------------------------------------------------ #
+$("start").addEventListener("click", start);
+$("stop").addEventListener("click", stop);
+$("copy").addEventListener("click", copyReport);
+$("download").addEventListener("click", downloadReport);
+$("clear").addEventListener("click", clearLog);
+window.addEventListener("resize", () => state.stats && drawChart());
+
+(function initHint() {
+  const hints = ["浏览器版不支持代理；同域并行上限约 6（HTTP/1.1）"];
+  if (location.protocol === "file:") {
+    hints.unshift("当前以 file:// 打开：跨域目标会降级为 no-cors（看不到状态码）。建议用本地服务器打开本页（同源无限制）");
+  }
+  $("hint").textContent = hints.join("；");
+  $("proxyNote").textContent = "本页只测「你自己的浏览器 → 目标」这条链路";
+  drawChart();
+  log("就绪：填目标地址 → 勾授权 → 点「▶ 开始测试」", "cfg");
+})();
+</script>
+</body>
+</html>
